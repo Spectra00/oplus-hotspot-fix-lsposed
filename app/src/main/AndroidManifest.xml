@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:allowBackup="false"
+        android:label="Oplus Hotspot Fix"
+        android:icon="@android:drawable/ic_menu_manage"
+        android:hasCode="true">
+
+        <meta-data
+            android:name="xposedmodule"
+            android:value="true" />
+        <meta-data
+            android:name="xposedminversion"
+            android:value="93" />
+        <meta-data
+            android:name="xposeddescription"
+            android:value="Patches the native hotspot tile to run a custom root command via a local Termux bridge instead of the OEM's broken subscription check" />
+    </application>
+</manifest>
