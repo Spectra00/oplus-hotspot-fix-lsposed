@@ -34,7 +34,10 @@ START_CMD = (
     f'cmd wifi start-softap "{SSID}" {SECURITY_TYPE} "{PASSPHRASE}" && '
     f"ndc nat enable {WIFI_INTERFACE} {UPSTREAM_INTERFACE} 1 {SUBNET}"
 )
-STOP_CMD = f"ndc nat disable {WIFI_INTERFACE} {UPSTREAM_INTERFACE} ; cmd wifi stop-softap"
+STOP_CMD = (
+    f"ndc nat disable {WIFI_INTERFACE} {UPSTREAM_INTERFACE} 1 {SUBNET} ; "
+    f"cmd wifi stop-softap"
+)
 
 
 def run_as_root(shell_command: str) -> None:
