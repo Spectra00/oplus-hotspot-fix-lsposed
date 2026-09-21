@@ -9,6 +9,8 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam;
 
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 
 /**
  * Hooks two points inside SystemUI and forwards both to a locally-running
@@ -42,6 +44,11 @@ import java.net.Socket;
  *
  * See the project README for the Termux-side listener setup
  * (termux/hotspot_listener.py + Termux:Boot).
+ *
+ * The shared-secret token lives at TOKEN_FILE_PATH, not a compiled-in
+ * constant, so it can be rotated entirely from Termux without ever
+ * rebuilding this module - see readToken() and the listener's matching
+ * get_or_create_token()/read_current_token().
  */
 public class HotspotHook implements IXposedHookLoadPackage {
 
@@ -53,8 +60,10 @@ public class HotspotHook implements IXposedHookLoadPackage {
             "com.android.systemui.statusbar.policy.HotspotControllerImpl";
     private static final String TILE_CLASS = "com.oplus.systemui.qs.tiles.OplusHotspotTile";
 
-    // Must match the TOKEN in termux/hotspot_listener.py exactly.
-    private static final String TOKEN = "fa764b123c5fe97c48f0ddd97cff1e30";
+    // Shared secret lives in a plain file, not a compiled-in constant, so it can be
+    // rotated entirely from Termux (nano/echo) without ever rebuilding this module.
+    // Must match TOKEN_FILE in termux/hotspot_listener.py exactly.
+    private static final String TOKEN_FILE_PATH = "/data/local/tmp/.oplushotspotfix_token";
     private static final String LISTENER_HOST = "127.0.0.1";
     private static final int LISTENER_PORT = 47291;
     private static final int SOCKET_TIMEOUT_MS = 3000;
@@ -127,13 +136,29 @@ public class HotspotHook implements IXposedHookLoadPackage {
         }
     }
 
+    private String readToken() {
+        try {
+            byte[] bytes = Files.readAllBytes(Paths.get(TOKEN_FILE_PATH));
+            return new String(bytes, "UTF-8").trim();
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to read token from " + TOKEN_FILE_PATH
+                    + " - has the Termux listener run at least once?", e);
+            return null;
+        }
+    }
+
     private void sendToTermux(boolean enable) {
         new Thread(() -> {
+            String token = readToken();
+            if (token == null || token.isEmpty()) {
+                Log.e(TAG, "No token available, not sending to Termux listener");
+                return;
+            }
             try (Socket socket = new Socket()) {
                 socket.connect(
                         new InetSocketAddress(LISTENER_HOST, LISTENER_PORT), SOCKET_TIMEOUT_MS);
                 socket.setSoTimeout(SOCKET_TIMEOUT_MS);
-                String payload = TOKEN + " " + (enable ? "on" : "off") + "\n";
+                String payload = token + " " + (enable ? "on" : "off") + "\n";
                 socket.getOutputStream().write(payload.getBytes("UTF-8"));
                 socket.getOutputStream().flush();
                 Log.i(TAG, "Sent '" + (enable ? "on" : "off") + "' to Termux listener");

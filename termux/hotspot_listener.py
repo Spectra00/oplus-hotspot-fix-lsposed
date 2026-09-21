@@ -10,13 +10,21 @@ survives reboots without manually opening Termux. Run with `python3 -u`
 session - Python block-buffers stdout when it isn't a terminal, so
 without -u, prints can sit unflushed for a long time even though the
 listener is working correctly.
+
+The shared-secret token is NOT hardcoded here. It lives in a plain file
+at TOKEN_FILE (default /data/local/tmp/.oplushotspotfix_token, world
+read/write so you can edit it directly with `nano`/`echo`, no `su -c`
+needed just to change it) - both this script and HotspotHook.java read
+it fresh on every request, so rotating it is a pure Termux-side edit
+that never requires rebuilding the Android module. If the file doesn't
+exist yet, this script generates a random one on first run.
 """
 
+import secrets
 import socket
 import subprocess
 
-# Must match HotspotHook.java's TOKEN exactly.
-TOKEN = "fa764b123c5fe97c48f0ddd97cff1e30"
+TOKEN_FILE = "/data/local/tmp/.oplushotspotfix_token"
 HOST = "127.0.0.1"
 PORT = 47291
 
@@ -40,14 +48,18 @@ STOP_CMD = (
 )
 
 
-def run_as_root(shell_command: str) -> None:
-    print(f"hotspot_listener: running as root: {shell_command}")
-    result = subprocess.run(
+def run_as_root(shell_command: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
         ["su", "-c", shell_command],
         check=False,
         capture_output=True,
         text=True,
     )
+
+
+def run_as_root_logged(shell_command: str) -> None:
+    print(f"hotspot_listener: running as root: {shell_command}")
+    result = run_as_root(shell_command)
     print(f"hotspot_listener: exit code {result.returncode}")
     if result.stdout.strip():
         print(f"hotspot_listener: stdout: {result.stdout.strip()}")
@@ -55,7 +67,29 @@ def run_as_root(shell_command: str) -> None:
         print(f"hotspot_listener: stderr: {result.stderr.strip()}")
 
 
+def read_current_token() -> str:
+    result = run_as_root(f"cat {TOKEN_FILE} 2>/dev/null")
+    return result.stdout.strip()
+
+
+def ensure_token_file() -> None:
+    """Generates a token on first run; leaves an existing one untouched."""
+    existing = read_current_token()
+    if existing:
+        print(f"hotspot_listener: using existing token from {TOKEN_FILE}")
+        return
+
+    new_token = secrets.token_hex(16)
+    result = run_as_root(f"echo '{new_token}' > {TOKEN_FILE} && chmod 666 {TOKEN_FILE}")
+    if result.returncode != 0:
+        print(f"hotspot_listener: FAILED to write token file: {result.stderr.strip()}")
+    else:
+        print(f"hotspot_listener: generated new token at {TOKEN_FILE}")
+
+
 def main() -> None:
+    ensure_token_file()
+
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind((HOST, PORT))
@@ -69,13 +103,14 @@ def main() -> None:
             data = conn.recv(256).decode("utf-8", errors="ignore").strip()
             print(f"hotspot_listener: received {data!r}")
             token, _, command = data.partition(" ")
-            if token != TOKEN:
+            current_token = read_current_token()
+            if not current_token or token != current_token:
                 print("hotspot_listener: token mismatch, ignoring")
                 continue
             if command == "on":
-                run_as_root(START_CMD)
+                run_as_root_logged(START_CMD)
             elif command == "off":
-                run_as_root(STOP_CMD)
+                run_as_root_logged(STOP_CMD)
             else:
                 print(f"hotspot_listener: unknown command {command!r}")
         except Exception as exc:  # noqa: BLE001 - keep the listener alive no matter what

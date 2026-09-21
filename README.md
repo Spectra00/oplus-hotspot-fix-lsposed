@@ -87,10 +87,20 @@ chmod +x ~/hotspot_listener.py
 Edit the `SSID`, `SECURITY_TYPE`, `PASSPHRASE`, `WIFI_INTERFACE`,
 `UPSTREAM_INTERFACE`, and `SUBNET` constants at the top of
 `~/hotspot_listener.py` to match your actual setup (the defaults are
-placeholders). Also change `TOKEN` to your own random value — and make the
-exact same change to `TOKEN` in
-`app/src/main/java/com/spectra00/oplushotspotfix/HotspotHook.java`, then
-rebuild the module, since the two must match exactly.
+placeholders).
+
+The shared-secret token is **not** a constant in either file — it lives
+in a plain file at `/data/local/tmp/.oplushotspotfix_token`
+(`chmod 666`, so you can edit it directly with `nano`/`echo`, no `su -c`
+needed). The listener generates a random one automatically the first
+time it runs if the file doesn't exist yet. Both sides re-read the file
+on every single request, so rotating the token is a pure Termux-side
+edit — it never requires touching `HotspotHook.java` or rebuilding the
+module:
+
+```bash
+echo 'your-new-random-value' > /data/local/tmp/.oplushotspotfix_token
+```
 
 Install **Termux:Boot** (a separate app in F-Droid/the Termux GitHub
 releases — not in the main Termux app) so the listener survives reboots
@@ -128,6 +138,12 @@ Tap the native "Personal hotspot" tile in Quick Settings. Check
   hotspot toggle in Android's own Settings app will no longer reflect actual
   state, since `TetheringManager` is bypassed entirely.
 - The socket is bound to `127.0.0.1` only (not reachable off-device) and
-  gated by a shared-secret token, but any other locally-installed app in
-  principle could still attempt to guess the token and hit the port. Treat
-  the token like a password — don't reuse the placeholder value.
+  gated by a shared-secret token. The token file is `chmod 666` (world
+  read/write) so it's easy to edit without `su -c` — but that also means
+  any other locally-installed app could read it directly, not just guess
+  it. This is a convenience/security trade-off made deliberately for a
+  low-stakes, loopback-only, single-purpose toggle; if that trade-off
+  doesn't sit right with you, tighten the file to `600` and have
+  `HotspotHook.java` read it via `su -c cat` instead of a plain file
+  read (which reintroduces giving SystemUI root, the exact thing this
+  whole bridge design exists to avoid — so weigh that before doing it).
