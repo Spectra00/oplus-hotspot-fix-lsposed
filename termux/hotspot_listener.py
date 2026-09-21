@@ -18,6 +18,16 @@ needed just to change it) - both this script and HotspotHook.java read
 it fresh on every request, so rotating it is a pure Termux-side edit
 that never requires rebuilding the Android module. If the file doesn't
 exist yet, this script generates a random one on first run.
+
+Because cmd wifi start-softap takes an ephemeral SSID/passphrase
+directly, rather than updating the persisted SoftApConfiguration
+Settings.app displays, the "Personal hotspot" screen keeps showing
+old/unrelated credentials while this hotspot is actually running with
+SSID/PASSPHRASE below. To make the real credentials easy to find
+without digging through this file, a Termux:API notification shows them
+whenever the hotspot is turned on (needs the separate Termux:API app +
+`pkg install termux-api` - this degrades to a harmless log line if
+that's not installed).
 """
 
 import secrets
@@ -57,7 +67,7 @@ def run_as_root(shell_command: str) -> subprocess.CompletedProcess:
     )
 
 
-def run_as_root_logged(shell_command: str) -> None:
+def run_as_root_logged(shell_command: str) -> subprocess.CompletedProcess:
     print(f"hotspot_listener: running as root: {shell_command}")
     result = run_as_root(shell_command)
     print(f"hotspot_listener: exit code {result.returncode}")
@@ -65,6 +75,44 @@ def run_as_root_logged(shell_command: str) -> None:
         print(f"hotspot_listener: stdout: {result.stdout.strip()}")
     if result.stderr.strip():
         print(f"hotspot_listener: stderr: {result.stderr.strip()}")
+    return result
+
+
+NOTIFICATION_ID = "hotspot_status"
+
+
+def notify_hotspot_on() -> None:
+    try:
+        subprocess.run(
+            [
+                "termux-notification",
+                "--id", NOTIFICATION_ID,
+                "--title", "Hotspot active",
+                "--content", f"{SSID}  /  {PASSPHRASE}",
+                "--ongoing",
+                "--priority", "high",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception as exc:  # termux-api not installed, or termux-notification missing
+        print(f"hotspot_listener: could not show notification ({exc}) - "
+              f"credentials are SSID={SSID!r} PASSPHRASE={PASSPHRASE!r}")
+
+
+def notify_hotspot_off() -> None:
+    try:
+        subprocess.run(
+            ["termux-notification-remove", NOTIFICATION_ID],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception as exc:
+        print(f"hotspot_listener: could not clear notification ({exc})")
 
 
 def read_current_token() -> str:
@@ -108,9 +156,13 @@ def main() -> None:
                 print("hotspot_listener: token mismatch, ignoring")
                 continue
             if command == "on":
-                run_as_root_logged(START_CMD)
+                result = run_as_root_logged(START_CMD)
+                if result.returncode == 0:
+                    notify_hotspot_on()
             elif command == "off":
-                run_as_root_logged(STOP_CMD)
+                result = run_as_root_logged(STOP_CMD)
+                if result.returncode == 0:
+                    notify_hotspot_off()
             else:
                 print(f"hotspot_listener: unknown command {command!r}")
         except Exception as exc:  # noqa: BLE001 - keep the listener alive no matter what

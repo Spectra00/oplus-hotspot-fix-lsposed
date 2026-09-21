@@ -122,6 +122,23 @@ Reboot once to confirm the listener starts automatically:
 pgrep -fa hotspot_listener.py
 ```
 
+Optional: `cmd wifi start-softap` sets ephemeral credentials directly,
+so Settings.app's "Personal hotspot" screen keeps showing old, unrelated
+Name/Password values while this hotspot is actually running — it never
+updates the persisted SoftApConfiguration Settings reads from. To have
+the real, currently-active SSID/password surfaced as a notification
+whenever you turn the hotspot on (instead of having to grep the log or
+this file), install the separate **Termux:API** app plus its Termux
+package:
+
+```bash
+pkg install termux-api
+```
+
+No further setup needed — the listener already calls `termux-notification`
+when it detects that package is present, and falls back to just logging
+the credentials if it isn't.
+
 ### 4. Test
 
 Tap the native "Personal hotspot" tile in Quick Settings. Check
