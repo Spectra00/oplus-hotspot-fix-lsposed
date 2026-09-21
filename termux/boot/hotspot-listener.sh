@@ -12,4 +12,4 @@ LISTENER="$HOME/hotspot_listener.py"
 # same port.
 pkill -f "hotspot_listener.py" 2>/dev/null
 
-nohup python3 "$LISTENER" >> "$HOME/hotspot_listener.log" 2>&1 &
+nohup python3 -u "$LISTENER" >> "$HOME/hotspot_listener.log" 2>&1 &
