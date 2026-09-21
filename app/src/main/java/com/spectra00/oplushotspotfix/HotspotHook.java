@@ -11,22 +11,34 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 
 /**
- * Hooks HotspotControllerImpl.setHotspotEnabled(boolean) inside SystemUI -
- * the single method both the stock and OPlus-customized hotspot Quick
- * Settings tiles funnel into - and, instead of letting it call through to
- * TetheringManager, forwards the request to a locally-running Termux
- * listener over a loopback TCP socket. Termux (already granted root the
+ * Hooks two points inside SystemUI and forwards both to a locally-running
+ * Termux listener over a loopback TCP socket, instead of letting either
+ * call through to the stock logic. Termux (already granted root the
  * normal, sandboxed way) does the actual privileged work; SystemUI itself
  * never touches su.
  *
- * HotspotControllerImpl lives in one of SystemUI's secondary dex files, and
- * handleLoadPackage() can fire before Android's multidex loader has fully
- * merged those into the process's classloader - hooking the target class
- * directly from handleLoadPackage risks a ClassNotFoundException even
- * though the class genuinely exists. The fix is to anchor on
- * SystemUIApplication.onCreate() instead: multidex is guaranteed fully
- * loaded by the time any Application's onCreate() runs, so installing the
- * real hook from inside that callback is reliable.
+ * 1. HotspotControllerImpl.setHotspotEnabled(boolean) - the shared AOSP
+ *    entry point both tile variants ultimately call.
+ * 2. OplusHotspotTile.handleUserOperationInternal$1(boolean) - OnePlus's
+ *    own click-handling method, which is where the actual bug lives: it
+ *    runs a carrier-entitlement check (QsOperatorUtils.isVZWHotspotUnAuth /
+ *    isATTHotspotUnAuth / a Sprint dialog, depending on
+ *    CustomizeFeatureOption flags) *before* ever reaching
+ *    setHotspotEnabled(true), and returns early without calling it at all
+ *    if that check fails. Confirmed via decompiled source + on-device
+ *    logcat: setHotspotEnabled(false) was reliably intercepted, but
+ *    setHotspotEnabled(true) never fired even once - the tile-level gate
+ *    was blocking it upstream of hook #1. Hooking this method directly
+ *    skips that gate entirely.
+ *
+ * Both HotspotControllerImpl and OplusHotspotTile live in SystemUI's
+ * secondary dex files, and handleLoadPackage() can fire before Android's
+ * multidex loader has fully merged those into the process's classloader -
+ * hooking either directly from handleLoadPackage risks a
+ * ClassNotFoundException even though the classes genuinely exist. The fix
+ * is to anchor on SystemUIApplication.onCreate() instead: multidex is
+ * guaranteed fully loaded by the time any Application's onCreate() runs,
+ * so installing the real hooks from inside that callback is reliable.
  *
  * See the project README for the Termux-side listener setup
  * (termux/hotspot_listener.py + Termux:Boot).
@@ -39,6 +51,7 @@ public class HotspotHook implements IXposedHookLoadPackage {
     private static final String APPLICATION_CLASS = "com.android.systemui.SystemUIApplication";
     private static final String CONTROLLER_CLASS =
             "com.android.systemui.statusbar.policy.HotspotControllerImpl";
+    private static final String TILE_CLASS = "com.oplus.systemui.qs.tiles.OplusHotspotTile";
 
     // Must match the TOKEN in termux/hotspot_listener.py exactly.
     private static final String TOKEN = "fa764b123c5fe97c48f0ddd97cff1e30";
@@ -90,6 +103,27 @@ public class HotspotHook implements IXposedHookLoadPackage {
             Log.i(TAG, "Hook installed successfully on " + CONTROLLER_CLASS);
         } catch (Throwable t) {
             Log.e(TAG, "Failed to install hook on " + CONTROLLER_CLASS, t);
+        }
+
+        try {
+            XposedHelpers.findAndHookMethod(
+                    TILE_CLASS,
+                    classLoader,
+                    "handleUserOperationInternal$1",
+                    boolean.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            boolean enable = (boolean) param.args[0];
+                            Log.i(TAG, "handleUserOperationInternal$1(" + enable
+                                    + ") intercepted - bypassing carrier entitlement check");
+                            sendToTermux(enable);
+                            param.setResult(true); // mimic "operation accepted"
+                        }
+                    });
+            Log.i(TAG, "Hook installed successfully on " + TILE_CLASS);
+        } catch (Throwable t) {
+            Log.e(TAG, "Failed to install hook on " + TILE_CLASS, t);
         }
     }
 
