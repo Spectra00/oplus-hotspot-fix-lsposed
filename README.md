@@ -144,6 +144,18 @@ the credentials if it isn't.
 Tap the native "Personal hotspot" tile in Quick Settings. Check
 `~/hotspot_listener.log` in Termux if it doesn't work as expected.
 
+The boot script runs the listener inside a small supervisor loop rather
+than starting it once directly — Android's OOM killer can reclaim a
+backgrounded process under memory pressure regardless of the wake lock
+above (the wake lock only prevents Doze/App Standby throttling, not
+outright low-memory reclaim), so rather than relying on the listener
+never being killed, the supervisor just restarts it automatically a
+couple seconds after it dies, instead of it staying dead until you
+notice and manually restart it. Check `~/hotspot_listener_supervisor.log`
+if the tile stops responding after having worked before — it logs every
+start/restart with a timestamp, which will show whether (and how often)
+this has been happening.
+
 ## Safety notes
 
 - This hooks a core SystemUI class. A mistake here can affect the whole
